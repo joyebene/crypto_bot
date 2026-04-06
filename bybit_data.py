@@ -3,27 +3,21 @@ from pybit.unified_trading import HTTP
 import config
 import time
 import os
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from requests.exceptions import ConnectionError, Timeout, RequestException
 
-# Use environment variables on Railway (recommended)
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY") or config.BYBIT_API_KEY
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET") or config.BYBIT_API_SECRET
+# Use environment variables on Railway (fallback to config for local)
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY") or getattr(config, "BYBIT_API_KEY", None)
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET") or getattr(config, "BYBIT_API_SECRET", None)
 
 
-@retry(
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((ConnectionError, Timeout, RequestException, Exception)),
-    reraise=True
-)
 def get_bybit_data(symbol: str, timeframe: str, limit: int = 200):
-    """Fetch kline with retries - optimized for Railway"""
+    """Fetches candlestick data - Optimized for Railway"""
     try:
+        # Use 'recv_window' and keep testnet=False for mainnet
         session = HTTP(
             api_key=BYBIT_API_KEY,
             api_secret=BYBIT_API_SECRET,
-            base_url="https://api.bytick.com"   # More stable alternative
+            testnet=False,           # Mainnet
+            # No base_url here - pybit doesn't support it in your version
         )
 
         response = session.get_kline(
@@ -44,31 +38,30 @@ def get_bybit_data(symbol: str, timeframe: str, limit: int = 200):
 
         df = pd.DataFrame(data_list, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
 
-        df['timestamp'] = pd.to_datetime(pd.to_numeric(df['timestamp']), unit='ms')
+        df['timestamp'] = pd.to_datetime(pd.to_numeric(df['timestamp'], errors='coerce'), unit='ms')
         for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
-            df[col] = pd.to_numeric(df[col])
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        df = df.iloc[::-1].reset_index(drop=True)
+        df.dropna(inplace=True)
+        df = df.iloc[::-1].reset_index(drop=True)   # oldest first
 
-        print(f"✅ Railway Success: {len(df)} candles for {symbol} | Latest Close: {df['close'].iloc[-1]}")
+        print(f"✅ SUCCESS on Railway: {len(df)} candles for {symbol} | Latest Close: {df['close'].iloc[-1]}")
         return df
 
     except Exception as e:
-        print(f"❌ Attempt failed for {symbol}: {type(e).__name__} - {e}")
-        raise  # Let tenacity retry
+        print(f"❌ Error fetching {symbol}: {type(e).__name__} - {e}")
+        return None
 
 
-@retry(stop=stop_after_attempt(4), wait=wait_exponential(min=3, max=15))
 def get_all_usdt_symbols():
-    """Fetch symbols with retries"""
+    """Fetches all active USDT perpetual symbols"""
     symbols = []
     cursor = None
     try:
         session = HTTP(
             api_key=BYBIT_API_KEY,
             api_secret=BYBIT_API_SECRET,
-            testnet=False,
-            base_url="https://api.bytick.com"
+            testnet=False
         )
 
         while True:
@@ -89,11 +82,28 @@ def get_all_usdt_symbols():
             cursor = response['result'].get('nextPageCursor')
             if not cursor:
                 break
-            time.sleep(0.3)
+            time.sleep(0.25)
 
-        print(f"✅ Fetched {len(symbols)} USDT symbols on Railway")
+        print(f"✅ Fetched {len(symbols)} USDT symbols successfully")
         return sorted(symbols)
 
     except Exception as e:
-        print(f"❌ Symbols fetch failed: {e}")
-        raise
+        print(f"Exception in get_all_usdt_symbols: {e}")
+        return []
+
+
+if __name__ == '__main__':
+    settings = config.SETTINGS
+    test_symbol = settings.get('symbols', ['BTCUSDT'])[0]
+
+    print("=== Testing get_bybit_data ===")
+    df = get_bybit_data(test_symbol, settings['timeframe'], limit=200)
+
+    if df is not None and not df.empty:
+        print(df.tail(3))
+
+    print("\n=== Testing get_all_usdt_symbols ===")
+    all_symbols = get_all_usdt_symbols()
+    if all_symbols:
+        print(f"Total symbols: {len(all_symbols)}")
+        print(f"First 10: {all_symbols[:10]}")
