@@ -1,4 +1,8 @@
-pybit
-pandas
 numpy
 python-telegram-bot[job-queue]
+pybit
+pandas
+tenacity
+python-dotenv
+python-telegram-bot
+apscheduler
