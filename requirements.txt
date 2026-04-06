@@ -1,8 +1,8 @@
 numpy
-python-telegram-bot[job-queue]
-pybit==5.4.0
 pandas
+pybit==5.4.0
 tenacity
 python-dotenv
-python-telegram-bot
+python-telegram-bot[job-queue]
 apscheduler
+httpx
