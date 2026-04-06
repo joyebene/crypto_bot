@@ -13,7 +13,7 @@ def get_all_usdt_symbols():
     symbols = []
     cursor = None
     try:
-        session = HTTP(api_key=config.BYBIT_API_KEY, api_secret=config.BYBIT_API_SECRET)
+        session = HTTP(api_key=config.BYBIT_API_KEY, api_secret=config.BYBIT_API_SECRET, testnet=True)
         while True:
             response = session.get_instruments_info(
                 category="linear",
@@ -57,7 +57,8 @@ def get_bybit_data(symbol, timeframe, limit=200):
     try:
         session = HTTP(
             api_key=config.BYBIT_API_KEY,
-            api_secret=config.BYBIT_API_SECRET
+            api_secret=config.BYBIT_API_SECRET,
+            testnet=True
         )
         response = session.get_kline(
             category="linear",
