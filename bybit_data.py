@@ -23,7 +23,6 @@ def get_bybit_data(symbol: str, timeframe: str, limit: int = 200):
         session = HTTP(
             api_key=BYBIT_API_KEY,
             api_secret=BYBIT_API_SECRET,
-            testnet=False,
             base_url="https://api.bytick.com"   # More stable alternative
         )
 

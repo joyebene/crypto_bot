@@ -1,6 +1,6 @@
 numpy
 python-telegram-bot[job-queue]
-pybit
+pybit==5.4.0
 pandas
 tenacity
 python-dotenv
