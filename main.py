@@ -213,12 +213,11 @@ async def received_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if key == 'symbols':
             new_value = [s.strip().upper() for s in value_str.split(',')]
         else:
-            # Get the type of the original setting to cast the new value correctly
             original_type = type(settings.get(key))
-            if original_type == int:
-                new_value = int(value_str)
-            elif original_type == float:
-                new_value = float(value_str)
+            if original_type in (int, float):
+                if not value_str.replace('.', '', 1).isdigit():
+                    raise ValueError("Input is not a valid number.")
+                new_value = original_type(value_str)
             else:
                 new_value = value_str
         

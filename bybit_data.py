@@ -60,7 +60,7 @@ def get_bybit_data(symbol, timeframe, limit=200):
             api_secret=config.BYBIT_API_SECRET
         )
         response = session.get_kline(
-            category="spot",
+            category="linear",
             symbol=symbol,
             interval=timeframe,
             limit=limit
