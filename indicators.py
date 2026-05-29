@@ -34,6 +34,29 @@ def calculate_rsi(data, period):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+def calculate_macd(data, short_window=12, long_window=26, signal_window=9):
+    """
+    Calculates the Moving Average Convergence Divergence (MACD).
+
+    Args:
+        data (pd.Series): A pandas Series of price data.
+        short_window (int): The short-term EMA period.
+        long_window (int): The long-term EMA period.
+        signal_window (int): The EMA period for the signal line.
+
+    Returns:
+        tuple[pd.Series, pd.Series, pd.Series]: A tuple containing the MACD line, signal line, and histogram.
+    """
+    short_ema = data.ewm(span=short_window, adjust=False).mean()
+    long_ema = data.ewm(span=long_window, adjust=False).mean()
+    
+    macd_line = short_ema - long_ema
+    signal_line = macd_line.ewm(span=signal_window, adjust=False).mean()
+    histogram = macd_line - signal_line
+    
+    return macd_line, signal_line, histogram
+
+
 if __name__ == '__main__':
     # This is for testing the functions directly
     settings = config.SETTINGS

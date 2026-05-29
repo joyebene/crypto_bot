@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application,
@@ -10,8 +11,10 @@ from telegram.ext import (
 )
 import config
 from bybit_data import get_bybit_data, get_all_usdt_symbols
-from indicators import calculate_ema, calculate_rsi
+from indicators import calculate_ema, calculate_rsi, calculate_macd
 from signals import generate_signals
+from trade_logger import log_signal
+from signal_generator import get_signal_details
 
 # Enable logging
 logging.basicConfig(
@@ -32,6 +35,8 @@ def initialize_bot_data(bot_data: dict):
         bot_data['stats'] = {}  # Symbol -> {'BUY': 0, 'SELL': 0, 'HOLD': 0}
     if 'last_signal' not in bot_data:
         bot_data['last_signal'] = {}  # Symbol -> "N/A"
+    if 'last_signal_time' not in bot_data:
+        bot_data['last_signal_time'] = {}  # Symbol -> datetime
 
 # --- Standard Command Handlers ---
 
@@ -41,8 +46,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
         [KeyboardButton("/start_bot"), KeyboardButton("/stop_bot")],
         [KeyboardButton("/status"), KeyboardButton("/stats")],
-        [KeyboardButton("/price"), KeyboardButton("/last_signal")],
-        [KeyboardButton("/settings"), KeyboardButton("/monitor_all_usdt")],
+        [KeyboardButton("/price"), KeyboardButton("/settings")],
+        [KeyboardButton("/monitor_all_usdt")],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
@@ -52,16 +57,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Displays the current settings and running jobs."""
+    """Displays a comprehensive status of the bot."""
     initialize_bot_data(context.bot_data)
     settings = context.bot_data['settings']
 
+    # --- Settings ---
     status_message = "--- Current Settings ---\n"
-    # Use .get('symbols', []) to avoid errors if 'symbols' isn't set
     symbols_list = settings.get('symbols', [])
     for key, value in settings.items():
         if key == 'symbols':
-            # Display only the count of symbols if the list is long
             if len(symbols_list) > 10:
                 status_message += f"symbols: (Monitoring {len(symbols_list)} pairs)\n"
             else:
@@ -69,8 +73,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             status_message += f"{key}: {value}\n"
 
+    # --- Monitoring Status ---
     status_message += "\n--- Monitoring Status ---\n"
-    
     active_symbols = []
     for job in context.job_queue.jobs():
         if job.name and job.name.startswith("signal_check_"):
@@ -78,9 +82,31 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             active_symbols.append(symbol)
 
     if active_symbols:
-        status_message += f"Actively monitoring: {len(active_symbols)} pairs\n"
+        status_message += f"✅ Bot is RUNNING.\nActively monitoring: {len(active_symbols)} pairs\n"
     else:
-        status_message += "Bot is stopped. No symbols are being monitored.\n"
+        status_message += "❌ Bot is STOPPED.\n"
+
+    # --- Last Signals ---
+    status_message += "\n--- Last Recorded Signals ---\n"
+    last_signals = context.bot_data.get('last_signal', {})
+    
+    if not last_signals:
+        status_message += "No signals recorded yet.\n"
+    else:
+        # Show last signals for monitored symbols first
+        monitored_last_signals = {s: last_signals[s] for s in active_symbols if s in last_signals}
+        
+        if not monitored_last_signals:
+             status_message += "No signals recorded for currently monitored pairs.\n"
+        else:
+            # Limit to a reasonable number to avoid a huge message
+            signals_to_show = list(monitored_last_signals.items())
+            if len(signals_to_show) > 5:
+                status_message += f"(Showing first 5 of {len(signals_to_show)} monitored pairs)\n"
+                signals_to_show = signals_to_show[:5]
+            
+            for symbol, signal in signals_to_show:
+                status_message += f"{symbol}: {signal}\n"
         
     await update.message.reply_text(status_message)
 
@@ -138,26 +164,6 @@ async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     await update.message.reply_text(message)
 
-
-async def get_last_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Displays the last recorded signal for each symbol."""
-    initialize_bot_data(context.bot_data)
-    last_signals = context.bot_data.get('last_signal', {})
-
-    if not last_signals:
-        await update.message.reply_text("No signals recorded yet.")
-        return
-
-    message = "--- Last Signals ---\n"
-    signals_to_show = list(last_signals.items())
-    if len(signals_to_show) > 10:
-        signals_to_show = signals_to_show[:10]
-        message += f"(Showing first 10 of {len(last_signals)} monitored pairs)\n"
-
-    for symbol, signal in signals_to_show:
-        message += f"{symbol}: {signal}\n"
-        
-    await update.message.reply_text(message)
 
 # --- Settings Conversation Handlers ---
 
@@ -227,8 +233,8 @@ async def received_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         main_keyboard = [
             [KeyboardButton("/start_bot"), KeyboardButton("/stop_bot")],
             [KeyboardButton("/status"), KeyboardButton("/stats")],
-            [KeyboardButton("/price"), KeyboardButton("/last_signal")],
-            [KeyboardButton("/settings"), KeyboardButton("/monitor_all_usdt")],
+            [KeyboardButton("/price"), KeyboardButton("/settings")],
+            [KeyboardButton("/monitor_all_usdt")],
         ]
         main_reply_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
 
@@ -256,8 +262,8 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     main_keyboard = [
         [KeyboardButton("/start_bot"), KeyboardButton("/stop_bot")],
         [KeyboardButton("/status"), KeyboardButton("/stats")],
-        [KeyboardButton("/price"), KeyboardButton("/last_signal")],
-        [KeyboardButton("/settings"), KeyboardButton("/monitor_all_usdt")],
+        [KeyboardButton("/price"), KeyboardButton("/settings")],
+        [KeyboardButton("/monitor_all_usdt")],
     ]
     main_reply_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
     await update.message.reply_text(
@@ -336,10 +342,17 @@ async def check_signals(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         df = get_bybit_data(symbol, settings['timeframe'])
         if df is not None and not df.empty:
+            # --- Indicator Calculations ---
             df['ema'] = calculate_ema(df['close'], settings['ema_period'])
             df['rsi'] = calculate_rsi(df['close'], settings['rsi_period'])
-            
+            df['macd'], df['macd_signal'], df['macd_hist'] = calculate_macd(df['close'])
+
             signal = generate_signals(df, settings)
+            price = df.iloc[-1]['close']
+            rsi = df.iloc[-1]['rsi']
+
+            # Log every signal generated for backtesting and analysis
+            log_signal(symbol, signal, price, rsi)
             
             # Initialize stats for the symbol if not present
             if symbol not in context.bot_data['stats']:
@@ -348,16 +361,44 @@ async def check_signals(context: ContextTypes.DEFAULT_TYPE) -> None:
             context.bot_data['stats'][symbol][signal] += 1
             
             if signal != "HOLD":
-                price = df.iloc[-1]['close']
-                rsi = df.iloc[-1]['rsi']
+                # --- Signal Throttling Check ---
+                now = datetime.now()
+                last_time = context.bot_data['last_signal_time'].get(symbol)
+                throttle_minutes = settings.get('signal_throttle_minutes', 30)
+
+                if last_time and (now - last_time).total_seconds() / 60 < throttle_minutes:
+                    logger.info(f"THROTTLED: Signal for {symbol} was already sent recently.")
+                    return
+                # --- End Throttling Check ---
+                
+                context.bot_data['last_signal_time'][symbol] = now # Update the last signal time
+
+                # --- Generate Detailed Signal Message ---
+                details = get_signal_details(signal, price, settings)
+                if not details:
+                    return
+
+                # --- RSI & MACD Context ---
+                rsi_context = "(Oversold)" if rsi < 30 else "(Overbought)" if rsi > 70 else ""
+                macd_hist = df.iloc[-1]['macd_hist']
+                macd_context = "(Bullish Crossover)" if macd_hist > 0 and df.iloc[-2]['macd_hist'] < 0 else "(Bearish Crossover)" if macd_hist < 0 and df.iloc[-2]['macd_hist'] > 0 else ""
+
+                # --- Construct the Message ---
                 message = (
-                    f"🚨 Trading Signal for {symbol} 🚨\n\n"
-                    f"Strategy: {settings['strategy']}\n"
-                    f"Signal: {signal}\n"
-                    f"Price: {price:.4f}\n"
-                    f"RSI({settings['rsi_period']}): {rsi:.2f}"
+                    f"🚨 **STRONG {signal} SIGNAL: {symbol}** 🚨\n\n"
+                    f"**Entry Price:** ${price:,.4f}\n\n"
+                    f"**Take Profit 1:** ${details['tp1']:,.4f} (+{abs(details['tp1']/price-1):.1%})\n"
+                    f"**Take Profit 2:** ${details['tp2']:,.4f} (+{abs(details['tp2']/price-1):.1%})\n"
+                    f"**Take Profit 3:** ${details['tp3']:,.4f} (+{abs(details['tp3']/price-1):.1%})\n\n"
+                    f"**Stop Loss:** ${details['sl']:,.4f} (-{abs(details['sl']/price-1):.1%})\n\n"
+                    f"**Risk/Reward Ratio:** {details['rr_ratio']:.2f}\n"
+                    f"**RSI ({settings['rsi_period']}):** {rsi:.2f} {rsi_context}\n"
+                    f"**MACD:** {macd_context}\n\n"
+                    f"*Validity: 4h | Exchange: Bybit | #{symbol.replace('USDT', '')}*"
                 )
-                await context.bot.send_message(job.chat_id, text=message)
+                
+                await context.bot.send_message(job.chat_id, text=message, parse_mode='Markdown')
+
             else:
                 # Only log HOLD signals, don't send a message
                 logger.info(f"Signal is HOLD for {symbol}.")
@@ -415,7 +456,6 @@ def main() -> None:
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("price", get_price))
-    application.add_handler(CommandHandler("last_signal", get_last_signal))
     application.add_handler(CommandHandler("start_bot", start_bot))
     application.add_handler(CommandHandler("stop_bot", stop_bot))
     application.add_handler(CommandHandler("monitor_all_usdt", monitor_all_usdt))
